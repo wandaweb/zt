@@ -2,6 +2,10 @@
 
 A vertically scrolling shooter game where you control a drill-equipped spaceship escaping from a planet's core to the surface.
 
+This was my entry for the AWS Build Games Challenge.  
+Gameplay video (no commentary): [https://youtu.be/05CnL5O9Uk8](https://youtu.be/05CnL5O9Uk8)  
+Dev stream: [https://www.twitch.tv/videos/2513334863](https://www.twitch.tv/videos/2513690390)  
+
 ## Story
 Your ship has been locked away deep in the planet's core by those who feared its unmatched potential. Now activated, you must drill and fight your way through multiple layers of the planet to reach the surface and join your kind above ground.
 
