@@ -219,7 +219,7 @@ class Enemy:
         self.y = y
         self.enemy_type = enemy_type
         self.layer = layer
-        self.height = 60  # Keep original height
+        self.height = 70  # Keep original height
         self.speed = random.uniform(1, 3)
         self.health = 20 if enemy_type == "basic" else 40
         self.max_health = self.health
@@ -333,8 +333,8 @@ class StaticEnemy:
         self.y = y
         self.pattern_type = pattern_type  # "circular", "spiral", "aimed"
         self.layer = layer
-        self.width = 40
-        self.height = 40
+        self.width = 50
+        self.height = 50
         self.health = 60
         self.max_health = 60
         self.shoot_timer = 0
