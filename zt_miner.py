@@ -1605,7 +1605,7 @@ class Game:
         
         # Victory screen options
         replay_text = self.small_font.render("Press R to replay the game", True, GREEN)
-        outro_text = self.small_font.render("Press O to view outro", True, BLUE)
+        outro_text = self.small_font.render("Press O to view outro", True, YELLOW)
         
         # Position all text elements
         victory_rect = victory_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 100))
