@@ -3,13 +3,23 @@ import random
 import math
 import json
 import os
+import argparse
+
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='ZT Miner - Chapter I: The Escape')
+parser.add_argument('--scale', type=int, choices=[1, 2, 4], default=1,
+                    help='Scale factor for the game window (1, 2, or 4)')
+args = parser.parse_args()
 
 # Initialize Pygame
 pygame.init()
 
 # Constants
-SCREEN_WIDTH = 800
-SCREEN_HEIGHT = 600
+BASE_WIDTH = 800
+BASE_HEIGHT = 600
+SCALE_FACTOR = args.scale
+SCREEN_WIDTH = BASE_WIDTH
+SCREEN_HEIGHT = BASE_HEIGHT
 FPS = 60
 
 # Colors
@@ -25,6 +35,8 @@ GRAY = (128, 128, 128)
 DARK_GRAY = (64, 64, 64)
 BROWN = (139, 69, 19)
 DARK_RED = (139, 0, 0)
+DARK_PURPLE = (64, 0, 64)
+LIGHT_BLUE = (173, 216, 230)
 
 # Layer colors and themes
 LAYER_THEMES = {
@@ -501,6 +513,58 @@ class PatternBullet:
     
     def get_rect(self):
         return pygame.Rect(self.x - 2, self.y - 2, self.width, self.height)
+
+
+class HealthOrb:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.width = 20
+        self.height = 20
+        self.heal_amount = 0.15  # 15% of max health
+        self.collected = False
+        self.pulse_timer = 0
+    
+    def update(self, scroll_speed):
+        # Move with world scroll
+        self.y += scroll_speed
+        
+        # Pulse animation
+        self.pulse_timer += 1
+        if self.pulse_timer > 60:
+            self.pulse_timer = 0
+    
+    def draw(self, surface):
+        # Calculate pulse size (between 18 and 22 pixels)
+        pulse_factor = math.sin(self.pulse_timer * 0.1) * 0.1 + 1.0
+        size = int(self.width * pulse_factor)
+        
+        # Draw red circle
+        center_x = self.x + self.width // 2
+        center_y = self.y + self.height // 2
+        pygame.draw.circle(surface, RED, (center_x, center_y), size // 2)
+        
+        # Draw white plus sign
+        line_width = 3
+        plus_size = size // 2
+        
+        # Horizontal line of plus sign
+        pygame.draw.rect(surface, WHITE, 
+                        (center_x - plus_size // 2, 
+                         center_y - line_width // 2,
+                         plus_size,
+                         line_width))
+        
+        # Vertical line of plus sign
+        pygame.draw.rect(surface, WHITE, 
+                        (center_x - line_width // 2,
+                         center_y - plus_size // 2,
+                         line_width,
+                         plus_size))
+    
+    def get_rect(self):
+        return pygame.Rect(self.x, self.y, self.width, self.height)
+
 
 class Obstacle:
     def __init__(self, x, y, width, height, layer, obstacle_type="basic"):
@@ -1003,8 +1067,18 @@ class ConversationScene:
 
 class Game:
     def __init__(self):
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("ZT Miner - Chapter I: The Escape")
+        # Set up scaled display
+        if SCALE_FACTOR > 1:
+            # Create a base surface at original resolution
+            self.base_screen = pygame.Surface((BASE_WIDTH, BASE_HEIGHT))
+            # Create the actual window at scaled resolution
+            self.screen = pygame.display.set_mode((BASE_WIDTH * SCALE_FACTOR, BASE_HEIGHT * SCALE_FACTOR))
+        else:
+            # No scaling needed
+            self.base_screen = None
+            self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+            
+        pygame.display.set_caption(f"ZT Miner - Chapter I: The Escape (Scale: {SCALE_FACTOR}x)")
         self.clock = pygame.time.Clock()
         self.running = True
         
@@ -1015,6 +1089,7 @@ class Game:
         self.obstacles = []
         self.enemy_bullets = []  # Global list for enemy bullets
         self.pattern_bullets = []  # Global list for pattern bullets
+        self.health_orbs = []  # List for health orbs
         self.current_layer = 0
         self.layer_progress = 0
         self.layer_height = 3000  # Height of each layer
@@ -1022,6 +1097,9 @@ class Game:
         self.world_y = 0  # World position for scrolling
         self.spawn_timer = 0
         self.static_spawn_timer = 0
+        self.obstacle_formation_timer = 0
+        self.health_orb_spawn_timer = 0  # Timer for health orb spawning
+        self.orbs_spawned_this_layer = 0  # Track orbs spawned in current layer
         self.obstacle_formation_timer = 0
         self.game_over = False
         self.victory = False
@@ -1089,6 +1167,8 @@ class Game:
         self.obstacles.clear()
         self.enemy_bullets.clear()
         self.pattern_bullets.clear()
+        self.health_orbs.clear()  # Clear health orbs when restarting
+        self.orbs_spawned_this_layer = 0  # Reset orb counter
         
         # Reset game state
         self.current_layer = 0
@@ -1217,6 +1297,18 @@ class Game:
         if self.obstacle_formation_timer >= 90:  # Spawn obstacle formations every 1.5 seconds
             self.spawn_obstacle_formations()
             self.obstacle_formation_timer = 0
+            
+        # Health orb spawning
+        self.health_orb_spawn_timer += 1
+        if self.health_orb_spawn_timer >= 600:  # Spawn health orbs every 10 seconds
+            self.spawn_health_orbs()
+            
+        # Update health orbs
+        for orb in self.health_orbs[:]:
+            orb.update(self.scroll_speed)
+            # Remove orbs that are off-screen
+            if orb.y > SCREEN_HEIGHT + 50:
+                self.health_orbs.remove(orb)
             
         # Always ensure some basic obstacles are present
         if len(self.obstacles) < 2:
@@ -1356,6 +1448,29 @@ class Game:
                     y = -self.world_y - random.randint(250, 450)
                     obstacle_type = random.choice(["basic", "crystal", "reinforced"])
                     self.obstacles.append(Obstacle(x, y, width, height, self.current_layer, obstacle_type))
+    def spawn_health_orbs(self):
+        """Spawn health orbs in the current layer"""
+        # Only spawn if we haven't reached the limit for this layer
+        max_orbs_per_layer = random.randint(1, 3)
+        
+        if self.orbs_spawned_this_layer < max_orbs_per_layer:
+            # Position the orb in a clear area
+            x = random.randint(50, SCREEN_WIDTH - 50)
+            y = -50  # Spawn just above the screen
+            
+            # Check if the position is clear of obstacles
+            orb_rect = pygame.Rect(x, y, 20, 20)
+            clear_position = True
+            
+            for obstacle in self.obstacles:
+                if orb_rect.colliderect(obstacle.get_rect()):
+                    clear_position = False
+                    break
+            
+            if clear_position:
+                self.health_orbs.append(HealthOrb(x, y))
+                self.orbs_spawned_this_layer += 1
+                self.health_orb_spawn_timer = 0  # Reset timer
     
     def check_collisions(self):
         player_rect = self.player.get_rect()
@@ -1420,6 +1535,16 @@ class Game:
                 self.pattern_bullets.remove(bullet)
                 self.player.take_damage(12)
         
+        # Health orbs vs player
+        for orb in self.health_orbs[:]:
+            if orb.get_rect().colliderect(player_rect):
+                # Heal the player
+                heal_amount = int(self.player.max_health * orb.heal_amount)
+                self.player.health = min(self.player.max_health, self.player.health + heal_amount)
+                self.health_orbs.remove(orb)
+                # Play healing sound effect
+                # self.heal_sound.play()
+        
         # Enemies vs player
         for enemy in self.enemies:
             if enemy.get_rect().colliderect(player_rect):
@@ -1446,15 +1571,20 @@ class Game:
         #self.obstacles.clear()
         self.enemy_bullets.clear()
         self.pattern_bullets.clear()
+        self.health_orbs.clear()  # Clear health orbs when restarting
+        self.orbs_spawned_this_layer = 0  # Reset orb counter
         self.game_over = False
         self.layer_progress = 0
         # Reset world position to current layer
         self.world_y = self.current_layer * self.layer_height
     
     def draw(self):
+        # Determine which surface to draw on
+        draw_surface = self.base_screen if self.base_screen else self.screen
+        
         # Draw layered background with blending
         self.background_manager.draw_blended_background(
-            self.screen, 
+            draw_surface, 
             self.current_layer, 
             self.layer_progress, 
             self.layer_height, 
@@ -1462,46 +1592,78 @@ class Game:
         )
         
         if self.show_outro:
-            self.outro_scene.draw(self.screen)
+            self.outro_scene.draw(draw_surface)
+            
+            # If we're using scaling, scale up the base surface to the screen
+            if self.base_screen:
+                scaled_surface = pygame.transform.scale(self.base_screen, 
+                                                      (BASE_WIDTH * SCALE_FACTOR, 
+                                                       BASE_HEIGHT * SCALE_FACTOR))
+                self.screen.blit(scaled_surface, (0, 0))
             return
         
         if self.show_conversation:
-            self.conversation_scene.draw(self.screen)
+            self.conversation_scene.draw(draw_surface)
+            
+            # If we're using scaling, scale up the base surface to the screen
+            if self.base_screen:
+                scaled_surface = pygame.transform.scale(self.base_screen, 
+                                                      (BASE_WIDTH * SCALE_FACTOR, 
+                                                       BASE_HEIGHT * SCALE_FACTOR))
+                self.screen.blit(scaled_surface, (0, 0))
             return
         
         if self.show_intro:
-            self.draw_intro()
+            self.draw_intro(draw_surface)
+            
+            # If we're using scaling, scale up the base surface to the screen
+            if self.base_screen:
+                scaled_surface = pygame.transform.scale(self.base_screen, 
+                                                      (BASE_WIDTH * SCALE_FACTOR, 
+                                                       BASE_HEIGHT * SCALE_FACTOR))
+                self.screen.blit(scaled_surface, (0, 0))
             return
         
         # Draw game objects
-        self.player.draw(self.screen)
+        self.player.draw(draw_surface)
         
         for enemy in self.enemies:
-            enemy.draw(self.screen)
+            enemy.draw(draw_surface)
             
         for static_enemy in self.static_enemies:
-            static_enemy.draw(self.screen)
+            static_enemy.draw(draw_surface)
         
         for obstacle in self.obstacles:
-            obstacle.draw(self.screen)
+            obstacle.draw(draw_surface)
+            
+        # Draw health orbs
+        for health_orb in self.health_orbs:
+            health_orb.draw(draw_surface)
             
         # Draw global bullet lists
         for bullet in self.enemy_bullets:
-            bullet.draw(self.screen)
+            bullet.draw(draw_surface)
             
         for bullet in self.pattern_bullets:
-            bullet.draw(self.screen)
+            bullet.draw(draw_surface)
         
         # Draw UI
-        self.draw_ui()
+        self.draw_ui(draw_surface)
         
         if self.game_over:
-            self.draw_game_over()
+            self.draw_game_over(draw_surface)
         elif self.victory:
-            self.draw_victory()
+            self.draw_victory(draw_surface)
+        
+        # If we're using scaling, scale up the base surface to the screen
+        if self.base_screen:
+            scaled_surface = pygame.transform.scale(self.base_screen, 
+                                                   (BASE_WIDTH * SCALE_FACTOR, 
+                                                    BASE_HEIGHT * SCALE_FACTOR))
+            self.screen.blit(scaled_surface, (0, 0))
     
-    def draw_intro(self):
-        self.screen.fill(BLACK)
+    def draw_intro(self, surface):
+        surface.fill(BLACK)
         
         intro_text = [
             "ZT MINER - Chapter I: The Escape",
@@ -1532,44 +1694,44 @@ class Game:
                 text = self.small_font.render(line, True, WHITE)
             
             text_rect = text.get_rect(center=(SCREEN_WIDTH // 2, y_offset))
-            self.screen.blit(text, text_rect)
+            surface.blit(text, text_rect)
             y_offset += 30 if i == 0 else 25
     
-    def draw_ui(self):
+    def draw_ui(self, surface):
         # Health bar
         health_ratio = self.player.health / self.player.max_health
         health_bar_width = 200
         health_bar_height = 20
-        pygame.draw.rect(self.screen, RED, (10, 10, health_bar_width, health_bar_height))
-        pygame.draw.rect(self.screen, GREEN, (10, 10, health_bar_width * health_ratio, health_bar_height))
+        pygame.draw.rect(surface, RED, (10, 10, health_bar_width, health_bar_height))
+        pygame.draw.rect(surface, GREEN, (10, 10, health_bar_width * health_ratio, health_bar_height))
         
         # Health text
         health_text = self.small_font.render(f"Health: {self.player.health}/{self.player.max_health}", True, WHITE)
-        self.screen.blit(health_text, (10, 35))
+        surface.blit(health_text, (10, 35))
         
         # Layer info
         layer_name = LAYER_THEMES[self.current_layer]["name"]
         layer_text = self.small_font.render(f"Layer: {layer_name}", True, WHITE)
-        self.screen.blit(layer_text, (10, 60))
+        surface.blit(layer_text, (10, 60))
         
         # Progress bar
         progress_ratio = self.layer_progress / self.layer_height
         progress_bar_width = 200
         progress_bar_height = 10
-        pygame.draw.rect(self.screen, DARK_GRAY, (10, 85, progress_bar_width, progress_bar_height))
-        pygame.draw.rect(self.screen, BLUE, (10, 85, progress_bar_width * progress_ratio, progress_bar_height))
+        pygame.draw.rect(surface, DARK_GRAY, (10, 85, progress_bar_width, progress_bar_height))
+        pygame.draw.rect(surface, BLUE, (10, 85, progress_bar_width * progress_ratio, progress_bar_height))
         
         # Score display (top-right corner)
         score_text = self.font.render(f"Score: {self.score:,}", True, YELLOW)
         score_rect = score_text.get_rect()
         score_rect.topright = (SCREEN_WIDTH - 10, 10)
-        self.screen.blit(score_text, score_rect)
+        surface.blit(score_text, score_rect)
     
-    def draw_game_over(self):
+    def draw_game_over(self, surface):
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
         overlay.set_alpha(128)
         overlay.fill(BLACK)
-        self.screen.blit(overlay, (0, 0))
+        surface.blit(overlay, (0, 0))
         
         game_over_text = self.font.render("SHIP DESTROYED", True, RED)
         penalty_text = self.small_font.render("-1,000 Point Penalty Applied", True, RED)
@@ -1581,16 +1743,16 @@ class Game:
         score_rect = score_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
         restart_rect = restart_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 40))
         
-        self.screen.blit(game_over_text, game_over_rect)
-        self.screen.blit(penalty_text, penalty_rect)
-        self.screen.blit(score_text, score_rect)
-        self.screen.blit(restart_text, restart_rect)
+        surface.blit(game_over_text, game_over_rect)
+        surface.blit(penalty_text, penalty_rect)
+        surface.blit(score_text, score_rect)
+        surface.blit(restart_text, restart_rect)
     
-    def draw_victory(self):
+    def draw_victory(self, surface):
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
         overlay.set_alpha(128)
         overlay.fill(BLACK)
-        self.screen.blit(overlay, (0, 0))
+        surface.blit(overlay, (0, 0))
         
         victory_text = self.large_font.render("ESCAPE SUCCESSFUL!", True, GREEN)
         success_text = self.small_font.render("You have reached the surface and joined your kind!", True, WHITE)
@@ -1616,13 +1778,13 @@ class Game:
         replay_rect = replay_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 70))
         outro_rect = outro_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 95))
         
-        self.screen.blit(victory_text, victory_rect)
-        self.screen.blit(success_text, success_rect)
-        self.screen.blit(final_score_text, final_score_rect)
-        self.screen.blit(breakdown_text, breakdown_rect)
-        self.screen.blit(combat_text, combat_rect)
-        self.screen.blit(replay_text, replay_rect)
-        self.screen.blit(outro_text, outro_rect)
+        surface.blit(victory_text, victory_rect)
+        surface.blit(success_text, success_rect)
+        surface.blit(final_score_text, final_score_rect)
+        surface.blit(breakdown_text, breakdown_rect)
+        surface.blit(combat_text, combat_rect)
+        surface.blit(replay_text, replay_rect)
+        surface.blit(outro_text, outro_rect)
     
     def run(self):
         while self.running:

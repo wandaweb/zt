@@ -17,6 +17,7 @@ Your ship has been locked away deep in the planet's core by those who feared its
 - **Progressive Difficulty**: Each layer introduces new challenges
 - **Seamless Level Progression**: Environment changes as you ascend
 - **Score System**: Earn points for destroying enemies, obstacles, and completing layers
+- **Window Scaling**: Scale the game window by 2x or 4x for high DPI displays
 
 ## Controls
 - **Arrow Keys**: Move your ship
@@ -64,7 +65,10 @@ Your ship has been locked away deep in the planet's core by those who feared its
 
 ## Installation & Running
 1. Install pygame: `pip install pygame`
-2. Run the game: `python zt_miner.py`
+2. Run the game:
+   - Default size (800x600): `python zt_miner.py`
+   - 2x scaling (1600x1200): `python zt_miner.py --scale 2`
+   - 4x scaling (3200x2400): `python zt_miner.py --scale 4`
 
 ## Tips
 - Use your drill strategically - it's more effective against obstacles than bullets
