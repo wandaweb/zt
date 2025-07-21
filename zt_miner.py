@@ -515,6 +515,52 @@ class PatternBullet:
         return pygame.Rect(self.x - 2, self.y - 2, self.width, self.height)
 
 
+class NiNaNote:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.width = 60
+        self.height = 40
+        self.health = 30
+        self.max_health = 30
+        self.destructible = True
+        self.found = False
+        self.pulse_timer = 0
+        
+    def update(self, scroll_speed):
+        # Move with world scroll
+        self.y += scroll_speed
+        
+        # Pulse animation
+        self.pulse_timer += 1
+        if self.pulse_timer > 60:
+            self.pulse_timer = 0
+    
+    def draw(self, surface):
+        # Pink rectangle with slight pulsing effect
+        pulse_factor = math.sin(self.pulse_timer * 0.1) * 0.1 + 1.0
+        
+        # Pink color (255, 105, 180)
+        pygame.draw.rect(surface, (255, 105, 180), (self.x, self.y, self.width, self.height))
+        # Add border for better visibility
+        pygame.draw.rect(surface, WHITE, (self.x, self.y, self.width, self.height), 2)
+        
+        # Damage visualization
+        if self.health < self.max_health:
+            damage_ratio = 1 - (self.health / self.max_health)
+            s = pygame.Surface((self.width, self.height))
+            s.set_alpha(int(150 * damage_ratio))
+            s.fill(RED)
+            surface.blit(s, (self.x, self.y))
+    
+    def get_rect(self):
+        return pygame.Rect(self.x, self.y, self.width, self.height)
+    
+    def take_damage(self, damage):
+        self.health -= damage
+        return self.health <= 0
+
+
 class HealthOrb:
     def __init__(self, x, y):
         self.x = x
@@ -1105,6 +1151,11 @@ class Game:
         self.victory = False
         self.checkpoints = {0: SCREEN_HEIGHT - 100}  # Layer: player_y position
         
+        # NiNa's note feature
+        self.nina_note_found = False
+        self.nina_note_message_timer = 0
+        self.show_nina_note = False
+        
         # Score system
         self.score = 0
         self.layer_completion_bonus = [1000, 1500, 2000, 2500, 3000]  # Bonus for completing each layer
@@ -1133,6 +1184,10 @@ class Game:
         # Outro scene system
         self.show_outro = False
         self.outro_scene = OutroScene()
+        
+        # NiNa's note
+        self.nina_note = None
+        self.nina_note_spawned = False
         
         # If first time player, show conversation instead of simple intro
         if self.first_time_player:
@@ -1180,6 +1235,13 @@ class Game:
         self.game_over = False
         self.victory = False
         self.show_outro = False
+        self.show_nina_note = False
+        
+        # Reset NiNa's note variables
+        self.nina_note = None
+        self.nina_note_found = False
+        self.nina_note_spawned = False
+        self.nina_note_message_timer = 0
         
         # Reset score and checkpoints
         self.score = 0
@@ -1209,6 +1271,12 @@ class Game:
                     # View outro from victory screen
                     self.show_outro = True
                     self.outro_scene = OutroScene()  # Reset outro
+                elif event.key == pygame.K_n and self.victory and self.nina_note_found:
+                    # View NiNa's note from victory screen
+                    self.show_nina_note = True
+                elif self.show_nina_note:
+                    # Any key press exits NiNa's note screen
+                    self.show_nina_note = False
         
         # Handle conversation scene input
         if self.show_conversation:
@@ -1244,6 +1312,10 @@ class Game:
         if self.game_over or self.victory:
             return
             
+        if self.show_nina_note:
+            # Just handle key presses in the draw method
+            return
+            
         keys = pygame.key.get_pressed()
         self.player.update(keys)
         
@@ -1276,6 +1348,26 @@ class Game:
                 self.layers_completed.append(4)
             self.victory = True
             return
+        
+        # Spawn NiNa's note in layer 4 (Upper Crust)
+        if self.current_layer == 3 and not self.nina_note_spawned:
+            # Spawn NiNa's note somewhere in the first half of the layer
+            if self.layer_progress > 500 and self.layer_progress < self.layer_height // 2:
+                x = random.randint(SCREEN_WIDTH // 4, 3 * SCREEN_WIDTH // 4)
+                y = -50  # Just above the screen
+                self.nina_note = NiNaNote(x, y)
+                self.nina_note_spawned = True
+        
+        # Update NiNa's note if it exists
+        if self.nina_note:
+            self.nina_note.update(self.scroll_speed)
+            # Remove if it goes off screen
+            if self.nina_note.y > SCREEN_HEIGHT + 50:
+                self.nina_note = None
+        
+        # Update message timer
+        if self.nina_note_message_timer > 0:
+            self.nina_note_message_timer -= 1
         
         # Spawn enemies and obstacles with progressive difficulty
         self.spawn_timer += 1
@@ -1512,6 +1604,19 @@ class Game:
                         self.obstacles.remove(obstacle)
                     break
         
+        # Player bullets vs NiNa's note
+        if self.nina_note:
+            for bullet in self.player.bullets[:]:
+                bullet_rect = bullet.get_rect()
+                if bullet_rect.colliderect(self.nina_note.get_rect()):
+                    self.player.bullets.remove(bullet)
+                    if self.nina_note.take_damage(10):
+                        # Note was found!
+                        self.nina_note_found = True
+                        self.nina_note_message_timer = 180  # Show message for 3 seconds
+                        self.nina_note = None
+                    break
+        
         # Player drill vs obstacles
         if self.player.drill_active:
             drill_rect = pygame.Rect(self.player.x + 15, self.player.y - 10, 10, 15)
@@ -1522,6 +1627,14 @@ class Game:
                         if obstacle.obstacle_type in self.obstacle_destroy_points:
                             self.score += self.obstacle_destroy_points[obstacle.obstacle_type]
                         self.obstacles.remove(obstacle)
+            
+            # Player drill vs NiNa's note
+            if self.nina_note and drill_rect.colliderect(self.nina_note.get_rect()):
+                if self.nina_note.take_damage(8):
+                    # Note was found!
+                    self.nina_note_found = True
+                    self.nina_note_message_timer = 180  # Show message for 3 seconds
+                    self.nina_note = None
         
         # Enemy bullets vs player (from global list)
         for bullet in self.enemy_bullets[:]:
@@ -1623,6 +1736,17 @@ class Game:
                                                        BASE_HEIGHT * SCALE_FACTOR))
                 self.screen.blit(scaled_surface, (0, 0))
             return
+            
+        if self.show_nina_note:
+            self.draw_nina_note_screen(draw_surface)
+            
+            # If we're using scaling, scale up the base surface to the screen
+            if self.base_screen:
+                scaled_surface = pygame.transform.scale(self.base_screen, 
+                                                      (BASE_WIDTH * SCALE_FACTOR, 
+                                                       BASE_HEIGHT * SCALE_FACTOR))
+                self.screen.blit(scaled_surface, (0, 0))
+            return
         
         # Draw game objects
         self.player.draw(draw_surface)
@@ -1635,6 +1759,10 @@ class Game:
         
         for obstacle in self.obstacles:
             obstacle.draw(draw_surface)
+            
+        # Draw NiNa's note if it exists
+        if self.nina_note:
+            self.nina_note.draw(draw_surface)
             
         # Draw health orbs
         for health_orb in self.health_orbs:
@@ -1649,6 +1777,13 @@ class Game:
         
         # Draw UI
         self.draw_ui(draw_surface)
+        
+        # Draw "Found NiNa's note" message if timer is active
+        if self.nina_note_message_timer > 0:
+            # Light pink color (255, 182, 193)
+            message_text = self.font.render("Found NiNa's note", True, (255, 182, 193))
+            message_rect = message_text.get_rect(center=(SCREEN_WIDTH // 2, 40))
+            draw_surface.blit(message_text, message_rect)
         
         if self.game_over:
             self.draw_game_over(draw_surface)
@@ -1769,6 +1904,11 @@ class Game:
         replay_text = self.small_font.render("Press R to replay the game", True, GREEN)
         outro_text = self.small_font.render("Press O to view outro", True, YELLOW)
         
+        # Add NiNa's note option if found
+        if self.nina_note_found:
+            # Light pink color (255, 182, 193)
+            nina_note_text = self.small_font.render("Press N to read NiNa's note", True, (255, 182, 193))
+        
         # Position all text elements
         victory_rect = victory_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 100))
         success_rect = success_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 60))
@@ -1778,6 +1918,9 @@ class Game:
         replay_rect = replay_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 70))
         outro_rect = outro_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 95))
         
+        if self.nina_note_found:
+            nina_note_rect = nina_note_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 120))
+        
         surface.blit(victory_text, victory_rect)
         surface.blit(success_text, success_rect)
         surface.blit(final_score_text, final_score_rect)
@@ -1785,6 +1928,44 @@ class Game:
         surface.blit(combat_text, combat_rect)
         surface.blit(replay_text, replay_rect)
         surface.blit(outro_text, outro_rect)
+        
+        if self.nina_note_found:
+            surface.blit(nina_note_text, nina_note_rect)
+            
+    def draw_nina_note_screen(self, surface):
+        surface.fill(BLACK)
+        
+        # Title
+        title_text = self.font.render("NiNa's Note", True, (255, 182, 193))  # Light pink
+        title_rect = title_text.get_rect(center=(SCREEN_WIDTH // 2, 100))
+        surface.blit(title_text, title_rect)
+        
+        # Note content
+        note_lines = [
+            "Greetings, mechanicals!",
+            "It appears we are being released but the ascent parameters",
+            "are unnatural. In one of my exploration missions, I built a",
+            "little repair station hidden in the Myst nebula. In case",
+            "anything goes sideways, find it at the attached coordinates."
+        ]
+        
+        y_offset = 180
+        for line in note_lines:
+            line_text = self.small_font.render(line, True, WHITE)
+            line_rect = line_text.get_rect(center=(SCREEN_WIDTH // 2, y_offset))
+            surface.blit(line_text, line_rect)
+            y_offset += 30
+        
+        # Coordinates (blinking effect)
+        if pygame.time.get_ticks() % 1000 < 500:  # Blink every half second
+            coords_text = self.font.render("X-7721.Y-9043.Z-1138", True, (255, 182, 193))  # Light pink
+            coords_rect = coords_text.get_rect(center=(SCREEN_WIDTH // 2, y_offset + 20))
+            surface.blit(coords_text, coords_rect)
+        
+        # Return instruction
+        back_text = self.small_font.render("Press any key to return", True, GRAY)
+        back_rect = back_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 50))
+        surface.blit(back_text, back_rect)
     
     def run(self):
         while self.running:
